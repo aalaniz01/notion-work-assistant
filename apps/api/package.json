@@ -1,0 +1,22 @@
+{
+  "name": "@notion-work-assistant/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@notion-work-assistant/domain": "workspace:*",
+    "@notion-work-assistant/priority-engine": "workspace:*",
+    "fastify": "5.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.3.0",
+    "tsx": "4.20.5"
+  }
+}
