@@ -9,12 +9,14 @@
   "packageManager": "pnpm@10.15.1",
   "scripts": {
     "build": "pnpm -r --if-present build",
-    "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm build",
-    "dev": "pnpm --parallel --filter @notion-work-assistant/api --filter @notion-work-assistant/web dev",
+    "build:packages": "pnpm --filter @notion-work-assistant/priority-engine... build",
+    "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm build && pnpm smoke:api",
+    "dev": "pnpm build:packages && pnpm --parallel --filter @notion-work-assistant/api --filter @notion-work-assistant/web dev",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
-    "test": "pnpm -r --if-present test",
+    "smoke:api": "node scripts/smoke-api.mjs",
+    "test": "pnpm build:packages && pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck"
   },
   "devDependencies": {
