@@ -9,14 +9,18 @@
   "packageManager": "pnpm@10.15.1",
   "scripts": {
     "build": "pnpm -r --if-present build",
-    "build:packages": "pnpm --filter @notion-work-assistant/priority-engine... build",
+    "build:packages": "pnpm --filter @notion-work-assistant/priority-engine... --filter @notion-work-assistant/db... build",
     "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm build && pnpm smoke:api",
+    "check:all": "pnpm check && pnpm test:db",
+    "db:generate": "pnpm --filter @notion-work-assistant/db db:generate",
+    "db:migrate": "pnpm --filter @notion-work-assistant/db db:migrate",
     "dev": "pnpm build:packages && pnpm --parallel --filter @notion-work-assistant/api --filter @notion-work-assistant/web dev",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "smoke:api": "node scripts/smoke-api.mjs",
     "test": "pnpm build:packages && pnpm -r --if-present test",
+    "test:db": "pnpm --filter @notion-work-assistant/db test:db",
     "typecheck": "pnpm -r --if-present typecheck"
   },
   "devDependencies": {

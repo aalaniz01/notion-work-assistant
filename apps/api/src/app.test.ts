@@ -19,6 +19,44 @@ describe("API", () => {
     expect(response.json()).toEqual({ status: "ok" });
   });
 
+  it("returns database readiness when PostgreSQL is reachable", async () => {
+    const app = buildApp({ readiness: { isReady: async () => true } });
+    apps.push(app);
+
+    const response = await app.inject({ method: "GET", url: "/health/ready" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ status: "ready", database: "ok" });
+  });
+
+  it("returns unavailable readiness without database connectivity", async () => {
+    const app = buildApp();
+    apps.push(app);
+
+    const response = await app.inject({ method: "GET", url: "/health/ready" });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({
+      status: "not_ready",
+      database: "unreachable",
+    });
+  });
+
+  it("closes the application database exactly once", async () => {
+    let closeCount = 0;
+    const app = buildApp({
+      closeDatabase: async () => {
+        closeCount += 1;
+      },
+    });
+    apps.push(app);
+
+    await app.close();
+    await app.close();
+
+    expect(closeCount).toBe(1);
+  });
+
   it("returns eligible recommendations in deterministic priority order", async () => {
     const app = buildApp();
     apps.push(app);

@@ -1,0 +1,1 @@
+CREATE DATABASE nwa_test;
