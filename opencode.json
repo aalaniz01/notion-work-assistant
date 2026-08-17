@@ -4,7 +4,7 @@
     "read": "allow",
     "grep": "allow",
     "glob": "allow",
-    "edit": "ask",
+    "edit": "allow",
     "bash": {
       "*": "ask",
       "git status": "allow",
@@ -21,7 +21,7 @@
       "permission": {
         "edit": "deny",
         "bash": {
-          "*": "ask",
+          "*": "allow",
           "git status": "allow",
           "git diff*": "allow",
           "git log*": "allow",
@@ -32,9 +32,9 @@
     },
     "build": {
       "permission": {
-        "edit": "ask",
+        "edit": "allow",
         "bash": {
-          "*": "ask",
+          "*": "allow",
           "git status": "allow",
           "git diff*": "allow",
           "git log*": "allow"

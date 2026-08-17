@@ -57,6 +57,74 @@ production secrets and must not be reused outside local development.
 `GET /health/ready` reports database readiness and returns HTTP 503 when
 PostgreSQL is missing or unreachable.
 
+## Read-only Notion setup
+
+Milestone 3 uses an internal Notion integration and Notion API version
+`2026-03-11`. The adapter can read and normalize data but is not connected to
+the API dashboard yet.
+
+1. Open Notion's integration settings and create an internal integration for
+   this application. Under capabilities, grant **Read content** only. Do not
+   grant insert, update, comment, or user-information capabilities.
+
+2. In Notion, open Mariana's Clients database and use its sharing or
+   connections menu to share that database with the integration. Repeat for
+   the Tasks database. Share exactly those two databases, not the workspace or
+   unrelated pages.
+
+3. Obtain each database container ID from its Notion URL. Use the database ID,
+   not a view ID. The adapter retrieves each container and discovers its child
+   data-source ID. A database with zero or multiple data sources is rejected.
+
+4. Put the token and the two container IDs in the ignored local `.env` file:
+
+   ```text
+   NOTION_TOKEN=<internal-integration-token>
+   NOTION_CLIENTS_DATABASE_ID=<clients-database-container-id>
+   NOTION_TASKS_DATABASE_ID=<tasks-database-container-id>
+   ```
+
+   Never paste a token into chat, source control, screenshots, logs, command
+   output, or shell history. Edit `.env` directly rather than exporting the
+   token in an interactive shell command.
+
+5. The default property mapping is:
+
+   | Database | Property    | Notion type                 | Required |
+   | -------- | ----------- | --------------------------- | -------- |
+   | Clients  | `Name`      | title                       | yes      |
+   | Tasks    | `Tarea`     | title                       | yes      |
+   | Tasks    | `Clientes`  | relation (exactly one page) | yes      |
+   | Tasks    | `Tipo`      | select                      | no       |
+   | Tasks    | `Date`      | date                        | no       |
+   | Tasks    | `Estado`    | status                      | yes      |
+   | Tasks    | `Prioridad` | select                      | no       |
+
+   If Mariana's property names differ, set the corresponding optional values
+   documented in `.env.example`. All task property mappings must be distinct.
+   `Clientes` remains the canonical client relationship. The non-canonical
+   `Cliente` select is ignored and is never used as a fallback. Tasks with an
+   empty `Clientes` relation are excluded from the read snapshot, and the
+   snapshot reports how many were skipped so incomplete historical data remains
+   visible. This behavior is based only on the relation and does not filter by
+   task dates. `Tipo` and `Prioridad` are preserved as trimmed Notion option
+   names without interpretation, `Date.start` becomes the task due date, and
+   `Checkbox` is ignored. The adapter validates both data-source schemas before
+   reading pages and rejects more than 5,000 rows per data source, which is an
+   intentional safety limit for this small-workspace application.
+
+6. Run the manual read-only verification:
+
+   ```bash
+   pnpm notion:verify
+   ```
+
+   This command performs reads only and prints aggregate client, included task,
+   skipped-unlinked-task, canonical status, task-type, and priority counts. It
+   never prints client names, task titles, IDs, tokens, URLs, headers, or raw
+   Notion responses. It is intentionally excluded from `pnpm check` and CI.
+   Without all three required Notion variables, it reports a safe skip.
+
 ## Database workflow
 
 After changing `packages/db/src/schema.ts`:
