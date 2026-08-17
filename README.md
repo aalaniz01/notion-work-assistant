@@ -57,6 +57,34 @@ production secrets and must not be reused outside local development.
 `GET /health/ready` reports database readiness and returns HTTP 503 when
 PostgreSQL is missing or unreachable.
 
+## Authentication foundation
+
+Milestone 4A adds provider-independent application users, external identity
+mappings, workspace memberships, and opaque server-side sessions. PostgreSQL
+stores only a SHA-256 hash of each session token. Raw tokens are accepted only
+from the `nwa_session` cookie and are never returned by an API route, logged, or
+persisted.
+
+There is intentionally no login or callback route yet. A real OIDC provider,
+production cookie issuance, and provider-specific configuration are deferred to
+Milestone 4B. There is no local authentication bypass.
+
+`GET /api/auth/session` always returns HTTP 200 for an ordinary anonymous or
+invalid session:
+
+```json
+{ "authenticated": false }
+```
+
+An authenticated session receives its currently authorized workspaces. The
+fake dashboard remains unchanged but is now available only from
+`GET /api/workspaces/:workspaceId/dashboard`. The backend authenticates first,
+validates the workspace UUID second, and then verifies an active membership.
+The legacy `GET /api/dashboard` route no longer serves dashboard data.
+
+`GET /health` and `GET /health/ready` remain public and never perform session or
+membership checks.
+
 ## Read-only Notion setup
 
 Milestone 3 uses an internal Notion integration and Notion API version

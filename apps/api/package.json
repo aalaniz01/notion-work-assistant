@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@fastify/cookie": "11.1.2",
     "@notion-work-assistant/db": "workspace:*",
     "@notion-work-assistant/domain": "workspace:*",
     "@notion-work-assistant/priority-engine": "workspace:*",

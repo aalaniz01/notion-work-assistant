@@ -102,34 +102,9 @@ async function stopServer(child) {
   }
 }
 
-function assertDashboard(value) {
-  assert(value && typeof value === "object");
-  assert(Array.isArray(value.clients));
-  assert(Array.isArray(value.recommendations));
-
-  for (const client of value.clients) {
-    assert.equal(typeof client.id, "string");
-    assert.equal(typeof client.name, "string");
-  }
-
-  for (const recommendation of value.recommendations) {
-    assert(recommendation && typeof recommendation === "object");
-    assert.equal(typeof recommendation.task?.id, "string");
-    assert.equal(typeof recommendation.task?.clientId, "string");
-    assert.equal(typeof recommendation.task?.title, "string");
-    assert.equal(typeof recommendation.task?.status, "string");
-    assert(recommendation.task?.priorityFactors);
-    assert.equal(typeof recommendation.priority?.recommendationScore, "number");
-    assert(
-      ["LOW", "MEDIUM", "HIGH"].includes(
-        recommendation.priority?.priorityLevel,
-      ),
-    );
-  }
-}
-
-async function fetchJson(url) {
+async function fetchJson(url, options = {}) {
   const response = await fetch(url, {
+    ...options,
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   const body = await response.json();
@@ -138,7 +113,7 @@ async function fetchJson(url) {
 
 const child = spawn(process.execPath, ["apps/api/dist/server.js"], {
   cwd: process.cwd(),
-  env: { ...process.env, PORT: "0" },
+  env: { ...process.env, DATABASE_URL: "", PORT: "0" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 let stderr = "";
@@ -153,9 +128,29 @@ try {
   assert.equal(health.response.status, 200);
   assert.deepEqual(health.body, { status: "ok" });
 
-  const dashboard = await fetchJson(`${address}/api/dashboard`);
-  assert.equal(dashboard.response.status, 200);
-  assertDashboard(dashboard.body);
+  const session = await fetchJson(`${address}/api/auth/session`);
+  assert.equal(session.response.status, 200);
+  assert.deepEqual(session.body, { authenticated: false });
+
+  const protectedDashboard = await fetchJson(
+    `${address}/api/workspaces/11111111-1111-4111-8111-111111111111/dashboard`,
+  );
+  assert.equal(protectedDashboard.response.status, 401);
+  assert.deepEqual(protectedDashboard.body, {
+    error: { code: "UNAUTHENTICATED" },
+  });
+
+  const unavailableAuthentication = await fetchJson(
+    `${address}/api/workspaces/11111111-1111-4111-8111-111111111111/dashboard`,
+    { headers: { Cookie: `nwa_session=${"a".repeat(43)}` } },
+  );
+  assert.equal(unavailableAuthentication.response.status, 503);
+  assert.deepEqual(unavailableAuthentication.body, {
+    error: { code: "AUTH_UNAVAILABLE" },
+  });
+
+  const legacyDashboard = await fetchJson(`${address}/api/dashboard`);
+  assert.equal(legacyDashboard.response.status, 404);
 } finally {
   await stopServer(child);
 }

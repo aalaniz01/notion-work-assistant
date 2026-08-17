@@ -1,9 +1,13 @@
 import {
   createDatabase,
   createDatabaseReadinessCheck,
+  DrizzleSessionRepository,
+  DrizzleWorkspaceMembershipRepository,
   type Database,
 } from "@notion-work-assistant/db";
 
+import { ApplicationSessionService } from "./auth/session-service.js";
+import { ApplicationWorkspaceAuthorizationService } from "./auth/workspace-authorization-service.js";
 import { buildApp } from "./app.js";
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -13,11 +17,21 @@ const database: Database | undefined = databaseUrl
 const checkDatabaseReadiness = database
   ? createDatabaseReadinessCheck(database)
   : undefined;
+const authentication = database
+  ? new ApplicationSessionService(new DrizzleSessionRepository(database))
+  : undefined;
+const workspaceAuthorization = database
+  ? new ApplicationWorkspaceAuthorizationService(
+      new DrizzleWorkspaceMembershipRepository(database),
+    )
+  : undefined;
 const app = buildApp({
+  authentication,
   closeDatabase: database ? () => database.close() : undefined,
   readiness: checkDatabaseReadiness
     ? { isReady: checkDatabaseReadiness }
     : undefined,
+  workspaceAuthorization,
 });
 const port = Number(process.env.PORT ?? 3000);
 

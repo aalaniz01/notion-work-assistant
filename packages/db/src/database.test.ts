@@ -7,10 +7,21 @@ import type { Sql } from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createDatabase, type Database } from "./client.js";
+import { DrizzleExternalIdentityRepository } from "./external-identity-repository.js";
+import { DrizzleIdentityProvisioningRepository } from "./identity-provisioning-repository.js";
 import { DrizzlePrioritySettingsRepository } from "./priority-settings-repository.js";
 import { createDatabaseReadinessCheck } from "./readiness.js";
-import { prioritySettings, workspaces } from "./schema.js";
+import {
+  externalIdentities,
+  prioritySettings,
+  sessions,
+  users,
+  workspaceMemberships,
+  workspaces,
+} from "./schema.js";
+import { DrizzleSessionRepository } from "./session-repository.js";
 import { requireTestDatabaseUrl } from "./test-database-safety.js";
+import { DrizzleWorkspaceMembershipRepository } from "./workspace-membership-repository.js";
 
 const migrationsFolder = fileURLToPath(new URL("../drizzle", import.meta.url));
 let database: Database | undefined;
@@ -30,9 +41,9 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   // Revalidate immediately before the only destructive test operation.
-  requireTestDatabaseUrl(process.env.TEST_DATABASE_URL);
+  requireTestDatabaseUrl(testDatabaseUrl);
   await getDatabase().db.execute(
-    sql`truncate table ${prioritySettings}, ${workspaces}`,
+    sql`truncate table ${sessions}, ${externalIdentities}, ${workspaceMemberships}, ${prioritySettings}, ${users}, ${workspaces}`,
   );
 });
 
@@ -47,6 +58,18 @@ async function createWorkspace(): Promise<string> {
     name: "Integration Test Workspace",
   });
   return workspaceId;
+}
+
+async function createUser(disabledAt: Date | null = null): Promise<string> {
+  const userId = randomUUID();
+  const createdAt = new Date("2026-01-01T00:00:00.000Z");
+  await getDatabase().db.insert(users).values({
+    id: userId,
+    disabledAt,
+    createdAt,
+    updatedAt: createdAt,
+  });
+  return userId;
 }
 
 describe("database foundation", () => {
@@ -208,5 +231,303 @@ describe("database foundation", () => {
         .set({ deadlineWeight: 60 })
         .where(sql`${prioritySettings.workspaceId} = ${workspaceId}`),
     ).rejects.toThrow();
+  });
+
+  it("stores only a unique valid session token hash", async () => {
+    const userId = await createUser();
+    const repository = new DrizzleSessionRepository(getDatabase());
+    const createdAt = new Date("2026-01-01T00:00:00.000Z");
+    const tokenHash = "a".repeat(64);
+    await repository.create({
+      userId,
+      tokenHash,
+      createdAt,
+      expiresAt: new Date("2026-01-01T08:00:00.000Z"),
+    });
+
+    await expect(repository.findByTokenHash(tokenHash)).resolves.toMatchObject({
+      userId,
+      disabledAt: null,
+      revokedAt: null,
+    });
+    await expect(
+      repository.create({
+        userId,
+        tokenHash,
+        createdAt,
+        expiresAt: new Date("2026-01-01T09:00:00.000Z"),
+      }),
+    ).rejects.toThrow();
+    await expect(
+      repository.create({
+        userId,
+        tokenHash: "raw-session-token",
+        createdAt,
+        expiresAt: new Date("2026-01-01T09:00:00.000Z"),
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("revokes sessions and exposes disabled user state", async () => {
+    const disabledAt = new Date("2026-01-01T01:00:00.000Z");
+    const userId = await createUser(disabledAt);
+    const repository = new DrizzleSessionRepository(getDatabase());
+    const tokenHash = "b".repeat(64);
+    await repository.create({
+      userId,
+      tokenHash,
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      expiresAt: new Date("2026-01-01T08:00:00.000Z"),
+    });
+    const revokedAt = new Date("2026-01-01T02:00:00.000Z");
+    await repository.revoke(tokenHash, revokedAt);
+
+    await expect(repository.findByTokenHash(tokenHash)).resolves.toMatchObject({
+      userId,
+      disabledAt,
+      revokedAt,
+    });
+  });
+
+  it("enforces session expiration timestamps", async () => {
+    const repository = new DrizzleSessionRepository(getDatabase());
+    const createdAt = new Date("2026-01-01T08:00:00.000Z");
+    const userId = await createUser();
+    await expect(
+      repository.create({
+        userId,
+        tokenHash: "c".repeat(64),
+        createdAt,
+        expiresAt: createdAt,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("requires an existing user for sessions", async () => {
+    const repository = new DrizzleSessionRepository(getDatabase());
+    await expect(
+      repository.create({
+        userId: randomUUID(),
+        tokenHash: "c".repeat(64),
+        createdAt: new Date("2026-01-01T08:00:00.000Z"),
+        expiresAt: new Date("2026-01-01T09:00:00.000Z"),
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("lists and checks only active workspace memberships", async () => {
+    const userId = await createUser();
+    const activeWorkspaceId = await createWorkspace();
+    const revokedWorkspaceId = await createWorkspace();
+    await getDatabase()
+      .db.insert(workspaceMemberships)
+      .values([
+        { userId, workspaceId: activeWorkspaceId },
+        {
+          userId,
+          workspaceId: revokedWorkspaceId,
+          createdAt: new Date("2026-01-01T00:00:00.000Z"),
+          revokedAt: new Date("2026-01-02T00:00:00.000Z"),
+        },
+      ]);
+    const repository = new DrizzleWorkspaceMembershipRepository(getDatabase());
+
+    await expect(repository.listActiveForUser(userId)).resolves.toEqual([
+      { id: activeWorkspaceId, name: "Integration Test Workspace" },
+    ]);
+    await expect(
+      repository.hasActiveMembership(userId, activeWorkspaceId),
+    ).resolves.toBe(true);
+    await expect(
+      repository.hasActiveMembership(userId, revokedWorkspaceId),
+    ).resolves.toBe(false);
+  });
+
+  it("rejects duplicate memberships and invalid membership timestamps", async () => {
+    const userId = await createUser();
+    const workspaceId = await createWorkspace();
+    await getDatabase().db.insert(workspaceMemberships).values({
+      userId,
+      workspaceId,
+    });
+
+    await expect(
+      getDatabase().db.insert(workspaceMemberships).values({
+        userId,
+        workspaceId,
+      }),
+    ).rejects.toThrow();
+    await expect(
+      getDatabase()
+        .db.insert(workspaceMemberships)
+        .values({
+          userId,
+          workspaceId: await createWorkspace(),
+          createdAt: new Date("2026-01-02T00:00:00.000Z"),
+          revokedAt: new Date("2026-01-01T00:00:00.000Z"),
+        }),
+    ).rejects.toThrow();
+  });
+
+  it("finds a user by unique external identity", async () => {
+    const userId = await createUser();
+    await getDatabase().db.insert(externalIdentities).values({
+      userId,
+      issuer: "https://identity.example.test",
+      subject: "subject-1",
+    });
+    const repository = new DrizzleExternalIdentityRepository(getDatabase());
+
+    await expect(
+      repository.findUserByIdentity(
+        "https://identity.example.test",
+        "subject-1",
+      ),
+    ).resolves.toEqual({ id: userId, disabledAt: null });
+    await expect(
+      getDatabase()
+        .db.insert(externalIdentities)
+        .values({
+          userId: await createUser(),
+          issuer: "https://identity.example.test",
+          subject: "subject-1",
+        }),
+    ).rejects.toThrow();
+  });
+
+  it("rejects malformed external identities", async () => {
+    const userId = await createUser();
+    await expect(
+      getDatabase().db.insert(externalIdentities).values({
+        userId,
+        issuer: " ",
+        subject: "subject-1",
+      }),
+    ).rejects.toThrow();
+    await expect(
+      getDatabase().db.insert(externalIdentities).values({
+        userId,
+        issuer: "https://identity.example.test",
+        subject: " ",
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("provisions identity and membership atomically and idempotently", async () => {
+    const workspaceId = await createWorkspace();
+    const repository = new DrizzleIdentityProvisioningRepository(getDatabase());
+    const input = {
+      issuer: "https://identity.example.test",
+      subject: "subject-1",
+      workspaceId,
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    };
+
+    const first = await repository.provisionIdentityAndMembership(input);
+    const second = await repository.provisionIdentityAndMembership(input);
+
+    expect(second).toEqual(first);
+    await expect(
+      new DrizzleWorkspaceMembershipRepository(
+        getDatabase(),
+      ).hasActiveMembership(first.userId, workspaceId),
+    ).resolves.toBe(true);
+  });
+
+  it("serializes concurrent provisioning of the same external identity", async () => {
+    requireTestDatabaseUrl(testDatabaseUrl);
+    const firstDatabase = createDatabase(testDatabaseUrl, { max: 1 });
+    const secondDatabase = createDatabase(testDatabaseUrl, { max: 1 });
+    const workspaceId = await createWorkspace();
+    const input = {
+      issuer: "https://identity.example.test",
+      subject: "subject-concurrent",
+      workspaceId,
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    };
+
+    try {
+      const [first, second] = await Promise.all([
+        new DrizzleIdentityProvisioningRepository(
+          firstDatabase,
+        ).provisionIdentityAndMembership(input),
+        new DrizzleIdentityProvisioningRepository(
+          secondDatabase,
+        ).provisionIdentityAndMembership(input),
+      ]);
+
+      expect(second).toEqual(first);
+      const [userCount] = await getDatabase()
+        .db.select({ value: sql<number>`count(*)::int` })
+        .from(users);
+      const [identityCount] = await getDatabase()
+        .db.select({ value: sql<number>`count(*)::int` })
+        .from(externalIdentities)
+        .where(
+          sql`${externalIdentities.issuer} = ${input.issuer} and ${externalIdentities.subject} = ${input.subject}`,
+        );
+      const [membershipCount] = await getDatabase()
+        .db.select({ value: sql<number>`count(*)::int` })
+        .from(workspaceMemberships)
+        .where(
+          sql`${workspaceMemberships.userId} = ${first.userId} and ${workspaceMemberships.workspaceId} = ${workspaceId}`,
+        );
+
+      expect(userCount?.value).toBe(1);
+      expect(identityCount?.value).toBe(1);
+      expect(membershipCount?.value).toBe(1);
+    } finally {
+      await Promise.all([firstDatabase.close(), secondDatabase.close()]);
+    }
+  });
+
+  it("does not reactivate a revoked membership during provisioning", async () => {
+    const workspaceId = await createWorkspace();
+    const repository = new DrizzleIdentityProvisioningRepository(getDatabase());
+    const input = {
+      issuer: "https://identity.example.test",
+      subject: "subject-revoked",
+      workspaceId,
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    };
+    const { userId } = await repository.provisionIdentityAndMembership(input);
+    await getDatabase()
+      .db.update(workspaceMemberships)
+      .set({ revokedAt: new Date("2026-01-02T00:00:00.000Z") })
+      .where(sql`${workspaceMemberships.userId} = ${userId}`);
+
+    await repository.provisionIdentityAndMembership(input);
+
+    await expect(
+      new DrizzleWorkspaceMembershipRepository(
+        getDatabase(),
+      ).hasActiveMembership(userId, workspaceId),
+    ).resolves.toBe(false);
+  });
+
+  it("rolls back provisioning when the workspace does not exist", async () => {
+    const repository = new DrizzleIdentityProvisioningRepository(getDatabase());
+    const identityRepository = new DrizzleExternalIdentityRepository(
+      getDatabase(),
+    );
+
+    await expect(
+      repository.provisionIdentityAndMembership({
+        issuer: "https://identity.example.test",
+        subject: "subject-rollback",
+        workspaceId: randomUUID(),
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      }),
+    ).rejects.toThrow();
+    await expect(
+      identityRepository.findUserByIdentity(
+        "https://identity.example.test",
+        "subject-rollback",
+      ),
+    ).resolves.toBeNull();
+    const [userCount] = await getDatabase()
+      .db.select({ value: sql<number>`count(*)::int` })
+      .from(users);
+    expect(userCount?.value).toBe(0);
   });
 });
