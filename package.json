@@ -8,6 +8,7 @@
   },
   "packageManager": "pnpm@10.15.1",
   "scripts": {
+    "auth:provision": "pnpm build:packages && pnpm --filter @notion-work-assistant/api build && node --env-file-if-exists=.env apps/api/dist/provision-identity.js",
     "build": "pnpm -r --if-present build",
     "build:packages": "pnpm --filter @notion-work-assistant/priority-engine... --filter @notion-work-assistant/db... --filter @notion-work-assistant/notion... build",
     "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm build && pnpm smoke:api",

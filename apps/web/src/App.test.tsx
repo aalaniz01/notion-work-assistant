@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
@@ -32,6 +38,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  window.history.replaceState(null, "", "/");
 });
 
 describe("App authentication states", () => {
@@ -46,7 +53,49 @@ describe("App authentication states", () => {
     expect(
       await screen.findByText("Sign in is required to view this workspace."),
     ).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Sign in" }).getAttribute("href"),
+    ).toBe("/api/auth/login");
   });
+
+  it("shows only allowlisted callback errors and removes them from the URL", async () => {
+    window.history.replaceState(
+      null,
+      "",
+      "/?auth_error=not_authorized&preserved=yes#section",
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse({ authenticated: false })),
+    );
+
+    render(<App />);
+
+    expect(
+      await screen.findByText("This identity is not authorized."),
+    ).toBeTruthy();
+    expect(window.location.search).toBe("?preserved=yes");
+    expect(window.location.hash).toBe("#section");
+  });
+
+  it.each(["constructor", "toString", "__proto__", "unknown_error"])(
+    "ignores non-allowlisted callback error %s",
+    async (authError) => {
+      window.history.replaceState(null, "", `/?auth_error=${authError}`);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(jsonResponse({ authenticated: false })),
+      );
+
+      render(<App />);
+
+      expect(
+        await screen.findByText("Sign in is required to view this workspace."),
+      ).toBeTruthy();
+      expect(window.location.search).toBe("");
+      expect(screen.queryByRole("alert")).toBeNull();
+    },
+  );
 
   it("uses the only authorized workspace and renders the fake dashboard", async () => {
     const fetchMock = vi
@@ -85,6 +134,74 @@ describe("App authentication states", () => {
     expect(
       await screen.findByText("You do not have access to this workspace."),
     ).toBeTruthy();
+  });
+
+  it("logs out through the same-origin POST endpoint", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({ authenticated: true, workspaces: [] }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Sign out" }));
+
+    expect(
+      await screen.findByText("Sign in is required to view this workspace."),
+    ).toBeTruthy();
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/auth/logout", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+    });
+  });
+
+  it("warns after delivered 503 because the backend cleared the browser cookie", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({ authenticated: true, workspaces: [] }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ error: { code: "AUTH_UNAVAILABLE" } }, 503),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Sign out" }));
+
+    expect(
+      await screen.findByText("Sign in is required to view this workspace."),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Signed out of this browser, but server-side revocation could not be confirmed.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("does not claim sign-out when logout transport fails", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({ authenticated: true, workspaces: [] }),
+      )
+      .mockRejectedValueOnce(new Error("network"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Sign out" }));
+
+    expect(
+      await screen.findByText(
+        "Sign out could not be confirmed. Check your connection and try again.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText("Sign in is required to view this workspace."),
+    ).toBeNull();
   });
 
   it("requires selection without loading a dashboard for multiple workspaces", async () => {

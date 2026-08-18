@@ -1,7 +1,12 @@
 import { and, eq, sql } from "drizzle-orm";
 
 import type { Database } from "./client.js";
-import { externalIdentities, users, workspaceMemberships } from "./schema.js";
+import {
+  externalIdentities,
+  users,
+  workspaceMemberships,
+  workspaces,
+} from "./schema.js";
 
 export interface ProvisionIdentityInput {
   issuer: string;
@@ -11,9 +16,17 @@ export interface ProvisionIdentityInput {
 }
 
 export interface IdentityProvisioningRepository {
+  workspaceExists(workspaceId: string): Promise<boolean>;
   provisionIdentityAndMembership(
     input: ProvisionIdentityInput,
-  ): Promise<{ userId: string }>;
+  ): Promise<{ userId: string; membershipActive: boolean }>;
+}
+
+export class DisabledIdentityProvisioningError extends Error {
+  constructor() {
+    super("Cannot provision a disabled identity");
+    this.name = "DisabledIdentityProvisioningError";
+  }
 }
 
 export function encodeIdentityAdvisoryLockInput(
@@ -28,9 +41,18 @@ export class DrizzleIdentityProvisioningRepository
 {
   constructor(private readonly database: Database) {}
 
+  async workspaceExists(workspaceId: string): Promise<boolean> {
+    const [workspace] = await this.database.db
+      .select({ id: workspaces.id })
+      .from(workspaces)
+      .where(eq(workspaces.id, workspaceId))
+      .limit(1);
+    return workspace !== undefined;
+  }
+
   async provisionIdentityAndMembership(
     input: ProvisionIdentityInput,
-  ): Promise<{ userId: string }> {
+  ): Promise<{ userId: string; membershipActive: boolean }> {
     return this.database.db.transaction(async (transaction) => {
       const lockInput = encodeIdentityAdvisoryLockInput(
         input.issuer,
@@ -42,8 +64,12 @@ export class DrizzleIdentityProvisioningRepository
         sql`select pg_advisory_xact_lock(hashtextextended(${lockInput}, 0))`,
       );
       const [existingIdentity] = await transaction
-        .select({ userId: externalIdentities.userId })
+        .select({
+          userId: externalIdentities.userId,
+          disabledAt: users.disabledAt,
+        })
         .from(externalIdentities)
+        .innerJoin(users, eq(externalIdentities.userId, users.id))
         .where(
           and(
             eq(externalIdentities.issuer, input.issuer),
@@ -53,6 +79,9 @@ export class DrizzleIdentityProvisioningRepository
         .limit(1);
 
       let userId = existingIdentity?.userId;
+      if (existingIdentity?.disabledAt) {
+        throw new DisabledIdentityProvisioningError();
+      }
       if (!userId) {
         const [user] = await transaction
           .insert(users)
@@ -82,7 +111,19 @@ export class DrizzleIdentityProvisioningRepository
           ],
         });
 
-      return { userId };
+      const [membership] = await transaction
+        .select({ revokedAt: workspaceMemberships.revokedAt })
+        .from(workspaceMemberships)
+        .where(
+          and(
+            eq(workspaceMemberships.userId, userId),
+            eq(workspaceMemberships.workspaceId, input.workspaceId),
+          ),
+        )
+        .limit(1);
+      if (!membership) throw new Error("Failed to create workspace membership");
+
+      return { userId, membershipActive: membership.revokedAt === null };
     });
   }
 }

@@ -132,6 +132,12 @@ try {
   assert.equal(session.response.status, 200);
   assert.deepEqual(session.body, { authenticated: false });
 
+  const login = await fetchJson(`${address}/api/auth/login`, {
+    redirect: "manual",
+  });
+  assert.equal(login.response.status, 503);
+  assert.deepEqual(login.body, { error: { code: "OIDC_UNAVAILABLE" } });
+
   const protectedDashboard = await fetchJson(
     `${address}/api/workspaces/11111111-1111-4111-8111-111111111111/dashboard`,
   );

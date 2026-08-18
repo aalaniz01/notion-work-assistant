@@ -1,11 +1,19 @@
 import {
   createDatabase,
   createDatabaseReadinessCheck,
+  DrizzleExternalIdentityRepository,
   DrizzleSessionRepository,
   DrizzleWorkspaceMembershipRepository,
   type Database,
 } from "@notion-work-assistant/db";
 
+import {
+  parseApplicationSessionConfiguration,
+  parseOidcConfiguration,
+} from "./auth/oidc-config.js";
+import { OidcLoginService } from "./auth/oidc-login-service.js";
+import { OpenIdClientProvider } from "./auth/oidc-provider.js";
+import { OidcTransientStateService } from "./auth/oidc-transient-state.js";
 import { ApplicationSessionService } from "./auth/session-service.js";
 import { ApplicationWorkspaceAuthorizationService } from "./auth/workspace-authorization-service.js";
 import { buildApp } from "./app.js";
@@ -20,6 +28,24 @@ const checkDatabaseReadiness = database
 const authentication = database
   ? new ApplicationSessionService(new DrizzleSessionRepository(database))
   : undefined;
+const sessionCookies = parseApplicationSessionConfiguration(process.env);
+const oidcConfiguration = parseOidcConfiguration(process.env);
+const oidc =
+  database && authentication && oidcConfiguration
+    ? {
+        applicationOrigin: oidcConfiguration.applicationOrigin,
+        callbackUrl: oidcConfiguration.callbackUrl,
+        login: new OidcLoginService(
+          new OpenIdClientProvider(oidcConfiguration),
+          new DrizzleExternalIdentityRepository(database),
+          authentication,
+        ),
+        secureCookies: oidcConfiguration.secureCookies,
+        transientState: new OidcTransientStateService(
+          oidcConfiguration.transientSecret,
+        ),
+      }
+    : undefined;
 const workspaceAuthorization = database
   ? new ApplicationWorkspaceAuthorizationService(
       new DrizzleWorkspaceMembershipRepository(database),
@@ -28,9 +54,12 @@ const workspaceAuthorization = database
 const app = buildApp({
   authentication,
   closeDatabase: database ? () => database.close() : undefined,
+  oidc,
   readiness: checkDatabaseReadiness
     ? { isReady: checkDatabaseReadiness }
     : undefined,
+  sessions: authentication,
+  sessionCookies,
   workspaceAuthorization,
 });
 const port = Number(process.env.PORT ?? 3000);

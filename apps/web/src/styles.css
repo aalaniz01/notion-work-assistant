@@ -148,6 +148,36 @@ h1 {
   color: #7f2e18;
 }
 
+.notice p {
+  margin: 0 0 18px;
+}
+
+.auth-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: 24px 0;
+}
+
+.auth-action {
+  display: inline-block;
+  padding: 10px 16px;
+  border: 1px solid #292822;
+  color: #292822;
+  background: transparent;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-decoration: none;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.auth-action:hover {
+  color: #f2efe8;
+  background: #292822;
+}
+
 @media (max-width: 640px) {
   main {
     width: min(100% - 28px, 1040px);

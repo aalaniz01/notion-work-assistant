@@ -158,6 +158,35 @@ describe("API", () => {
     expect(response.json()).toEqual({ authenticated: false });
   });
 
+  it("rejects duplicate session cookies without selecting either value", async () => {
+    let receivedToken: string | undefined;
+    const app = buildApp({
+      authentication: {
+        async authenticate(token) {
+          receivedToken = token;
+          return token ? { userId: "user-1" } : null;
+        },
+      },
+      workspaceAuthorization: {
+        listAuthorizedWorkspaces: async () => [],
+        hasAccess: async () => false,
+      },
+    });
+    apps.push(app);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/auth/session",
+      headers: {
+        cookie: `nwa_session=${SESSION_TOKEN}; nwa_session=${"b".repeat(43)}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ authenticated: false });
+    expect(receivedToken).toBeUndefined();
+  });
+
   it("treats a malformed cookie as anonymous when storage is unavailable", async () => {
     const app = buildApp();
     apps.push(app);

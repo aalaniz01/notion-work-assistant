@@ -17,6 +17,7 @@ export async function registerSessionRoute(
   options: SessionRouteOptions,
 ): Promise<void> {
   app.get("/api/auth/session", async (request, reply) => {
+    reply.header("Cache-Control", "no-store");
     try {
       const principal = await authenticateRequest(request, options.sessions);
       if (!principal) return { authenticated: false as const };

@@ -423,15 +423,44 @@ describe("database foundation", () => {
       createdAt: new Date("2026-01-01T00:00:00.000Z"),
     };
 
+    await expect(repository.workspaceExists(workspaceId)).resolves.toBe(true);
+    await expect(repository.workspaceExists(randomUUID())).resolves.toBe(false);
+
     const first = await repository.provisionIdentityAndMembership(input);
     const second = await repository.provisionIdentityAndMembership(input);
 
     expect(second).toEqual(first);
+    expect(first.membershipActive).toBe(true);
     await expect(
       new DrizzleWorkspaceMembershipRepository(
         getDatabase(),
       ).hasActiveMembership(first.userId, workspaceId),
     ).resolves.toBe(true);
+  });
+
+  it("does not provision a disabled external identity", async () => {
+    const userId = await createUser(new Date("2026-01-01T01:00:00.000Z"));
+    const workspaceId = await createWorkspace();
+    await getDatabase().db.insert(externalIdentities).values({
+      userId,
+      issuer: "https://identity.example.test",
+      subject: "subject-disabled",
+    });
+    const repository = new DrizzleIdentityProvisioningRepository(getDatabase());
+
+    await expect(
+      repository.provisionIdentityAndMembership({
+        issuer: "https://identity.example.test",
+        subject: "subject-disabled",
+        workspaceId,
+        createdAt: new Date("2026-01-02T00:00:00.000Z"),
+      }),
+    ).rejects.toThrow("Cannot provision a disabled identity");
+    await expect(
+      new DrizzleWorkspaceMembershipRepository(
+        getDatabase(),
+      ).hasActiveMembership(userId, workspaceId),
+    ).resolves.toBe(false);
   });
 
   it("serializes concurrent provisioning of the same external identity", async () => {
@@ -496,8 +525,10 @@ describe("database foundation", () => {
       .set({ revokedAt: new Date("2026-01-02T00:00:00.000Z") })
       .where(sql`${workspaceMemberships.userId} = ${userId}`);
 
-    await repository.provisionIdentityAndMembership(input);
+    const reprovisioned =
+      await repository.provisionIdentityAndMembership(input);
 
+    expect(reprovisioned.membershipActive).toBe(false);
     await expect(
       new DrizzleWorkspaceMembershipRepository(
         getDatabase(),

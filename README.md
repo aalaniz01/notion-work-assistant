@@ -57,17 +57,51 @@ production secrets and must not be reused outside local development.
 `GET /health/ready` reports database readiness and returns HTTP 503 when
 PostgreSQL is missing or unreachable.
 
-## Authentication foundation
+## Authentication
 
-Milestone 4A adds provider-independent application users, external identity
+The application uses provider-independent application users, external identity
 mappings, workspace memberships, and opaque server-side sessions. PostgreSQL
 stores only a SHA-256 hash of each session token. Raw tokens are accepted only
 from the `nwa_session` cookie and are never returned by an API route, logged, or
 persisted.
 
-There is intentionally no login or callback route yet. A real OIDC provider,
-production cookie issuance, and provider-specific configuration are deferred to
-Milestone 4B. There is no local authentication bypass.
+OIDC login uses backend-owned Authorization Code Flow with PKCE. Each attempt
+has independent state, nonce, and PKCE values in a short-lived encrypted
+HttpOnly cookie. Provider tokens are validated in memory and discarded. The
+callback accepts only an existing exact issuer/subject mapping; it never creates
+users or workspace memberships. There is no local authentication bypass.
+
+OIDC is optional only so health checks, anonymous behavior, and normal CI can
+run without real provider credentials. If any OIDC setting is present, the full
+configuration is required. Configure the five concepts documented in
+`.env.example`; omit `OIDC_CLIENT_SECRET` entirely for a public client. The
+callback is always derived as `${APPLICATION_ORIGIN}/api/auth/callback`.
+
+For local development, register
+`http://localhost:5173/api/auth/callback` with the selected provider and set
+`APPLICATION_ORIGIN=http://localhost:5173`. Generate
+`OIDC_TRANSIENT_SECRET` as exactly 32 random bytes encoded as unpadded
+base64url. Production origins must use HTTPS; provider issuers must always use
+HTTPS.
+
+An operator must provision an identity before it can log in. The workspace must
+already exist, and issuer and subject are exact provider identifiers rather
+than an email address:
+
+```bash
+pnpm auth:provision --issuer <exact-issuer> --subject <exact-subject> --workspace-id <existing-workspace-uuid>
+```
+
+The command emits only a safe success or failure message. It performs no
+provider request and does not print claims or tokens. Unknown or disabled
+identities fail closed at callback time.
+
+Because the established application cookie name is `nwa_session`, deploy the
+application on an origin whose parent domain has no untrusted sibling
+applications capable of setting parent-domain cookies. A future deployment
+hardening migration should use `__Host-` cookie names with `Path=/`; it is
+deferred because Milestone 4A established the current cookie name and callback
+attempt path.
 
 `GET /api/auth/session` always returns HTTP 200 for an ordinary anonymous or
 invalid session:

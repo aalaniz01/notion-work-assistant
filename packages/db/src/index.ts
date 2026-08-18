@@ -5,6 +5,7 @@ export {
   type ExternalIdentityUserRecord,
 } from "./external-identity-repository.js";
 export {
+  DisabledIdentityProvisioningError,
   DrizzleIdentityProvisioningRepository,
   encodeIdentityAdvisoryLockInput,
   type IdentityProvisioningRepository,

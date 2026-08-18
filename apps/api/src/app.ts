@@ -2,12 +2,20 @@ import cookie from "@fastify/cookie";
 import Fastify, { type FastifyInstance } from "fastify";
 
 import { AuthenticationUnavailableError } from "./auth/errors.js";
-import { isValidSessionToken } from "./auth/session-service.js";
+import type { ApplicationSessionConfiguration } from "./auth/oidc-config.js";
+import {
+  isValidSessionToken,
+  type SessionService,
+} from "./auth/session-service.js";
 import type {
   RequestSessionService,
   WorkspaceAuthorizationService,
 } from "./auth/types.js";
 import { registerDashboardRoute } from "./routes/dashboard.js";
+import {
+  registerAuthLifecycleRoutes,
+  type OidcRouteRuntime,
+} from "./routes/auth-lifecycle.js";
 import { registerHealthRoute } from "./routes/health.js";
 import {
   registerReadinessRoute,
@@ -18,7 +26,10 @@ import { registerSessionRoute } from "./routes/session.js";
 export interface BuildAppOptions {
   authentication?: RequestSessionService;
   closeDatabase?: () => Promise<void>;
+  oidc?: OidcRouteRuntime;
   readiness?: ReadinessChecker;
+  sessions?: SessionService;
+  sessionCookies?: ApplicationSessionConfiguration;
   workspaceAuthorization?: WorkspaceAuthorizationService;
 }
 
@@ -35,6 +46,17 @@ const unavailableAuthentication: RequestSessionService = {
   },
 };
 
+const unavailableSessions: SessionService = {
+  ...unavailableAuthentication,
+  async create() {
+    throw new AuthenticationUnavailableError();
+  },
+  async revoke(rawToken) {
+    if (!isValidSessionToken(rawToken)) return;
+    throw new AuthenticationUnavailableError();
+  },
+};
+
 const unavailableWorkspaceAuthorization: WorkspaceAuthorizationService = {
   async listAuthorizedWorkspaces() {
     throw new AuthenticationUnavailableError();
@@ -46,6 +68,9 @@ const unavailableWorkspaceAuthorization: WorkspaceAuthorizationService = {
 
 interface AuthenticatedApiOptions {
   authentication: RequestSessionService;
+  oidc?: OidcRouteRuntime;
+  sessions: SessionService;
+  sessionCookies?: ApplicationSessionConfiguration;
   workspaceAuthorization: WorkspaceAuthorizationService;
 }
 
@@ -54,6 +79,11 @@ async function registerAuthenticatedApi(
   options: AuthenticatedApiOptions,
 ): Promise<void> {
   await app.register(cookie);
+  await app.register(registerAuthLifecycleRoutes, {
+    oidc: options.oidc,
+    sessions: options.sessions,
+    sessionCookies: options.sessionCookies,
+  });
   await app.register(registerSessionRoute, {
     sessions: options.authentication,
     workspaceAuthorization: options.workspaceAuthorization,
@@ -66,7 +96,9 @@ async function registerAuthenticatedApi(
 
 export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   const app = Fastify({ logger: false });
-  const authentication = options.authentication ?? unavailableAuthentication;
+  const sessions = options.sessions ?? unavailableSessions;
+  const authentication =
+    options.authentication ?? options.sessions ?? unavailableAuthentication;
   const workspaceAuthorization =
     options.workspaceAuthorization ?? unavailableWorkspaceAuthorization;
 
@@ -76,6 +108,16 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   });
   void app.register(registerAuthenticatedApi, {
     authentication,
+    oidc: options.oidc,
+    sessions,
+    sessionCookies:
+      options.sessionCookies ??
+      (options.oidc
+        ? {
+            applicationOrigin: options.oidc.applicationOrigin,
+            secureCookies: options.oidc.secureCookies,
+          }
+        : undefined),
     workspaceAuthorization,
   });
   if (options.closeDatabase) {

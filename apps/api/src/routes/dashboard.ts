@@ -54,6 +54,7 @@ export async function registerDashboardRoute(
     "/api/workspaces/:workspaceId/dashboard",
     {
       preHandler: async (request: FastifyRequest, reply: FastifyReply) => {
+        reply.header("Cache-Control", "no-store");
         let principal;
         try {
           principal = await authenticateRequest(request, options.sessions);
