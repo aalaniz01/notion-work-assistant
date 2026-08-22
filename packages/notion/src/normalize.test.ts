@@ -48,6 +48,7 @@ describe("Notion page normalization", () => {
       dueDate: "2026-05-10",
       status: "NOT_STARTED",
       priority: "Alta",
+      createdAt: "2026-01-01T00:00:00.000Z",
     });
     expect(task).not.toHaveProperty("category");
     expect(task).not.toHaveProperty("subtype");

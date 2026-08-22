@@ -3,6 +3,7 @@ import type {
   SessionRepository,
   UserAuthenticationRecord,
 } from "@notion-work-assistant/db";
+import type { Dashboard } from "@notion-work-assistant/domain";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -14,11 +15,29 @@ import type {
   WorkspaceAuthorizationService,
 } from "./auth/types.js";
 import { buildApp } from "./app.js";
+import type { DashboardService } from "./dashboard/dashboard-service.js";
+import { NotionUnavailableError } from "./dashboard/notion-unavailable.js";
 
 const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 const SESSION_TOKEN = "a".repeat(43);
 const NOW = new Date("2026-01-01T00:00:00.000Z");
 const apps: ReturnType<typeof buildApp>[] = [];
+
+const stubDashboard: Dashboard = {
+  clients: [{ id: "client-1", name: "Northstar Studio" }],
+  recommendations: [
+    {
+      task: {
+        id: "task-1",
+        clientId: "client-1",
+        title: "Confirm delivery details",
+        status: "NOT_STARTED",
+        priorityFactors: { deadline: 1, waitingTime: 2, estimatedEffort: 3 },
+      },
+      priority: { recommendationScore: 42, priorityLevel: "MEDIUM" },
+    },
+  ],
+};
 
 class CookieSessionRepository implements SessionRepository {
   lookupCount = 0;
@@ -50,12 +69,18 @@ class CookieSessionRepository implements SessionRepository {
 
 function authenticatedServices(options: { authorized?: boolean } = {}): {
   authentication: RequestSessionService;
+  dashboard: DashboardService;
   workspaceAuthorization: WorkspaceAuthorizationService;
 } {
   return {
     authentication: {
       async authenticate() {
         return { userId: "user-1" };
+      },
+    },
+    dashboard: {
+      async loadDashboard() {
+        return stubDashboard;
       },
     },
     workspaceAuthorization: {
@@ -357,7 +382,7 @@ describe("API", () => {
     expect(response.json()).toEqual({ error: { code: "FORBIDDEN" } });
   });
 
-  it("authenticates a real session cookie before returning the fake dashboard", async () => {
+  it("authenticates a real session cookie before returning the dashboard", async () => {
     const rawSessionToken = "s".repeat(43);
     const repository = new CookieSessionRepository(
       hashSessionToken(rawSessionToken),
@@ -382,31 +407,65 @@ describe("API", () => {
       url: `/api/workspaces/${WORKSPACE_ID}/dashboard`,
       headers: { cookie: `nwa_session=${rawSessionToken}` },
     });
-    const body = response.json<{
-      recommendations: Array<{
-        task: { id: string; status: string };
-        priority: { recommendationScore: number };
-      }>;
-    }>();
+    const body = response.json<Dashboard>();
 
     expect(response.statusCode).toBe(200);
-    expect(body.recommendations.map(({ task }) => task.status)).not.toContain(
-      "APPROVED",
-    );
-    expect(body.recommendations.map(({ task }) => task.status)).not.toContain(
-      "WAITING_APPROVAL",
-    );
-    expect(body.recommendations.map(({ task }) => task.id)).toEqual([
-      "task-0",
-      "task-1",
-      "task-6",
-      "task-2",
-      "task-5",
-    ]);
-    expect(
-      body.recommendations.map(({ priority }) => priority.recommendationScore),
-    ).toEqual([72, 72, 72, 62, 34]);
+    expect(body).toEqual(stubDashboard);
     expect(repository.lookupCount).toBe(1);
+  });
+
+  it("returns 503 NOTION_UNAVAILABLE when the dashboard source is unavailable", async () => {
+    const app = buildApp({
+      ...authenticatedServices(),
+      dashboard: {
+        async loadDashboard() {
+          throw new NotionUnavailableError("NOTION_CONFIG_ERROR");
+        },
+      },
+    });
+    apps.push(app);
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/workspaces/${WORKSPACE_ID}/dashboard`,
+      headers: { cookie: `nwa_session=${SESSION_TOKEN}` },
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({
+      error: { code: "NOTION_UNAVAILABLE" },
+    });
+    expect(response.body).not.toContain("Northstar Studio");
+    expect(response.body).not.toContain("Confirm delivery details");
+  });
+
+  it("fails closed without fake data when no dashboard service is configured", async () => {
+    const app = buildApp({
+      authentication: {
+        async authenticate() {
+          return { userId: "user-1" };
+        },
+      },
+      workspaceAuthorization: {
+        listAuthorizedWorkspaces: async () => [],
+        hasAccess: async () => true,
+      },
+    });
+    apps.push(app);
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/workspaces/${WORKSPACE_ID}/dashboard`,
+      headers: { cookie: `nwa_session=${SESSION_TOKEN}` },
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({
+      error: { code: "NOTION_UNAVAILABLE" },
+    });
+    expect(response.body).not.toContain("Northstar Studio");
+    expect(response.body).not.toContain("Confirm delivery details");
+    expect(response.body).not.toContain("Fieldwork Labs");
   });
 
   it.each([

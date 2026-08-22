@@ -111,10 +111,10 @@ invalid session:
 ```
 
 An authenticated session receives its currently authorized workspaces. The
-fake dashboard remains unchanged but is now available only from
-`GET /api/workspaces/:workspaceId/dashboard`. The backend authenticates first,
-validates the workspace UUID second, and then verifies an active membership.
-The legacy `GET /api/dashboard` route no longer serves dashboard data.
+dashboard is available only from `GET /api/workspaces/:workspaceId/dashboard`.
+The backend authenticates first, validates the workspace UUID second, and then
+verifies an active membership before reading Notion. The legacy
+`GET /api/dashboard` route no longer serves dashboard data.
 
 `GET /health` and `GET /health/ready` remain public and never perform session or
 membership checks.
@@ -122,8 +122,12 @@ membership checks.
 ## Read-only Notion setup
 
 Milestone 3 uses an internal Notion integration and Notion API version
-`2026-03-11`. The adapter can read and normalize data but is not connected to
-the API dashboard yet.
+`2026-03-11`. Milestone 5 connects that adapter to the authenticated dashboard:
+after authentication and membership verification, each dashboard request reads
+the Clients and Tasks data sources, computes deadline, waiting-time, and effort
+factors, and returns a recommendation-sorted dashboard. The dashboard fails
+closed with `NOTION_UNAVAILABLE` when Notion is unconfigured or unreachable;
+there is no fake-data fallback.
 
 1. Open Notion's integration settings and create an internal integration for
    this application. Under capabilities, grant **Read content** only. Do not
@@ -186,6 +190,28 @@ the API dashboard yet.
    never prints client names, task titles, IDs, tokens, URLs, headers, or raw
    Notion responses. It is intentionally excluded from `pnpm check` and CI.
    Without all three required Notion variables, it reports a safe skip.
+
+## Dashboard scoring
+
+Each included task produces three 0-to-100 priority factors from the read-only
+snapshot using the server's current date (UTC calendar days, so scores never
+vary by server timezone):
+
+- **Deadline**: `0` when the task has no due date, `100` when overdue or due
+  today, otherwise `clamp(100 - daysRemaining * 10, 0, 100)`.
+- **Waiting time**: `clamp(daysSinceCreated * 10, 0, 100)` using Notion's page
+  creation time.
+- **Estimated effort**: a constant `50`; Notion has no effort property.
+
+`APPROVED` and `WAITING_APPROVAL` tasks are excluded. The recommendation score
+is the weighted sum of the three factors plus a status bonus
+(`CHANGES_REQUESTED` +10, `IN_PROGRESS` +5), rounded and capped at 100. The
+default weights are 50/40/10 (deadline/waiting time/effort). A
+`priority_settings` row for the workspace overrides those weights and must sum
+to exactly 100; weights live in PostgreSQL, never duplicated from Notion. If
+no row exists the defaults apply, but a settings read failure fails the request
+rather than silently using defaults. Notion errors never leak into responses:
+the API returns only a `NOTION_UNAVAILABLE` error code.
 
 ## Database workflow
 

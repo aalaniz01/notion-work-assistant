@@ -1,8 +1,3 @@
-import type {
-  Dashboard,
-  DashboardRecommendation,
-} from "@notion-work-assistant/domain";
-import { calculatePriority } from "@notion-work-assistant/priority-engine";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import { AuthenticationUnavailableError } from "../auth/errors.js";
@@ -11,39 +6,16 @@ import type {
   RequestSessionService,
   WorkspaceAuthorizationService,
 } from "../auth/types.js";
-import { clients, tasks } from "../data/fake-dashboard.js";
+import type { DashboardService } from "../dashboard/dashboard-service.js";
+import { NotionUnavailableError } from "../dashboard/notion-unavailable.js";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface DashboardRouteOptions {
+  dashboard: DashboardService;
   sessions: RequestSessionService;
   workspaceAuthorization: WorkspaceAuthorizationService;
-}
-
-function buildDashboard(): Dashboard {
-  const recommendations: DashboardRecommendation[] = [];
-
-  for (const task of tasks) {
-    const result = calculatePriority(task);
-    if (!result.eligible) continue;
-
-    recommendations.push({
-      task,
-      priority: {
-        recommendationScore: result.recommendationScore,
-        priorityLevel: result.priorityLevel,
-      },
-    });
-  }
-
-  recommendations.sort(
-    (left, right) =>
-      right.priority.recommendationScore - left.priority.recommendationScore ||
-      left.task.id.localeCompare(right.task.id),
-  );
-
-  return { clients, recommendations };
 }
 
 export async function registerDashboardRoute(
@@ -102,6 +74,18 @@ export async function registerDashboardRoute(
         }
       },
     },
-    async () => buildDashboard(),
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { workspaceId } = request.params as { workspaceId: string };
+      try {
+        return await options.dashboard.loadDashboard(workspaceId);
+      } catch (error) {
+        if (error instanceof NotionUnavailableError) {
+          return reply
+            .status(503)
+            .send({ error: { code: "NOTION_UNAVAILABLE" as const } });
+        }
+        throw error;
+      }
+    },
   );
 }

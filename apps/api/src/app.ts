@@ -11,6 +11,8 @@ import type {
   RequestSessionService,
   WorkspaceAuthorizationService,
 } from "./auth/types.js";
+import type { DashboardService } from "./dashboard/dashboard-service.js";
+import { NotionUnavailableError } from "./dashboard/notion-unavailable.js";
 import { registerDashboardRoute } from "./routes/dashboard.js";
 import {
   registerAuthLifecycleRoutes,
@@ -26,6 +28,7 @@ import { registerSessionRoute } from "./routes/session.js";
 export interface BuildAppOptions {
   authentication?: RequestSessionService;
   closeDatabase?: () => Promise<void>;
+  dashboard?: DashboardService;
   oidc?: OidcRouteRuntime;
   readiness?: ReadinessChecker;
   sessions?: SessionService;
@@ -66,8 +69,15 @@ const unavailableWorkspaceAuthorization: WorkspaceAuthorizationService = {
   },
 };
 
+const unavailableDashboard: DashboardService = {
+  async loadDashboard() {
+    throw new NotionUnavailableError("NOTION_UNAVAILABLE");
+  },
+};
+
 interface AuthenticatedApiOptions {
   authentication: RequestSessionService;
+  dashboard: DashboardService;
   oidc?: OidcRouteRuntime;
   sessions: SessionService;
   sessionCookies?: ApplicationSessionConfiguration;
@@ -89,6 +99,7 @@ async function registerAuthenticatedApi(
     workspaceAuthorization: options.workspaceAuthorization,
   });
   await app.register(registerDashboardRoute, {
+    dashboard: options.dashboard,
     sessions: options.authentication,
     workspaceAuthorization: options.workspaceAuthorization,
   });
@@ -101,6 +112,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     options.authentication ?? options.sessions ?? unavailableAuthentication;
   const workspaceAuthorization =
     options.workspaceAuthorization ?? unavailableWorkspaceAuthorization;
+  const dashboard = options.dashboard ?? unavailableDashboard;
 
   void app.register(registerHealthRoute);
   void app.register(registerReadinessRoute, {
@@ -108,6 +120,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   });
   void app.register(registerAuthenticatedApi, {
     authentication,
+    dashboard,
     oidc: options.oidc,
     sessions,
     sessionCookies:

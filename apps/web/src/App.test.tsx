@@ -97,7 +97,7 @@ describe("App authentication states", () => {
     },
   );
 
-  it("uses the only authorized workspace and renders the fake dashboard", async () => {
+  it("uses the only authorized workspace and renders the dashboard", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -117,6 +117,50 @@ describe("App authentication states", () => {
       `/api/workspaces/${WORKSPACE_ID}/dashboard`,
       expect.objectContaining({ credentials: "same-origin" }),
     );
+  });
+
+  it("renders an empty state for a dashboard with no recommendations", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          authenticated: true,
+          workspaces: [{ id: WORKSPACE_ID, name: "Workspace" }],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ clients: [], recommendations: [] }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    expect(
+      await screen.findByText("No work needs a recommendation right now."),
+    ).toBeTruthy();
+  });
+
+  it("renders a generic error when the dashboard is unavailable", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          authenticated: true,
+          workspaces: [{ id: WORKSPACE_ID, name: "Workspace" }],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ error: { code: "NOTION_UNAVAILABLE" } }, 503),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    expect(
+      await screen.findByText(
+        "The dashboard is unavailable. Try again shortly.",
+      ),
+    ).toBeTruthy();
   });
 
   it("renders forbidden when the user has no workspace", async () => {

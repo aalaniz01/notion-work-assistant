@@ -44,6 +44,9 @@ importers:
       '@notion-work-assistant/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@notion-work-assistant/notion':
+        specifier: workspace:*
+        version: link:../../packages/notion
       '@notion-work-assistant/priority-engine':
         specifier: workspace:*
         version: link:../../packages/priority-engine

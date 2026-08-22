@@ -68,5 +68,6 @@ export function normalizeTask(
       page.id,
     ),
     priority: readOptionalSelect(page.properties, properties.priority, page.id),
+    createdAt: page.created_time,
   };
 }

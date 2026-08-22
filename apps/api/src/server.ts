@@ -2,10 +2,12 @@ import {
   createDatabase,
   createDatabaseReadinessCheck,
   DrizzleExternalIdentityRepository,
+  DrizzlePrioritySettingsRepository,
   DrizzleSessionRepository,
   DrizzleWorkspaceMembershipRepository,
   type Database,
 } from "@notion-work-assistant/db";
+import { createNotionReader } from "@notion-work-assistant/notion";
 
 import {
   parseApplicationSessionConfiguration,
@@ -17,6 +19,19 @@ import { OidcTransientStateService } from "./auth/oidc-transient-state.js";
 import { ApplicationSessionService } from "./auth/session-service.js";
 import { ApplicationWorkspaceAuthorizationService } from "./auth/workspace-authorization-service.js";
 import { buildApp } from "./app.js";
+import { NotionDashboardService } from "./dashboard/dashboard-service.js";
+
+const NOTION_REQUIRED_VARIABLES = [
+  "NOTION_TOKEN",
+  "NOTION_CLIENTS_DATABASE_ID",
+  "NOTION_TASKS_DATABASE_ID",
+] as const;
+
+function hasNotionConfiguration(
+  environment: Readonly<Record<string, string | undefined>>,
+): boolean {
+  return NOTION_REQUIRED_VARIABLES.every((name) => environment[name]?.trim());
+}
 
 const databaseUrl = process.env.DATABASE_URL;
 const database: Database | undefined = databaseUrl
@@ -51,9 +66,24 @@ const workspaceAuthorization = database
       new DrizzleWorkspaceMembershipRepository(database),
     )
   : undefined;
+const dashboard =
+  database && hasNotionConfiguration(process.env)
+    ? (() => {
+        try {
+          return new NotionDashboardService(
+            createNotionReader(process.env),
+            new DrizzlePrioritySettingsRepository(database),
+            () => new Date(),
+          );
+        } catch {
+          return undefined;
+        }
+      })()
+    : undefined;
 const app = buildApp({
   authentication,
   closeDatabase: database ? () => database.close() : undefined,
+  dashboard,
   oidc,
   readiness: checkDatabaseReadiness
     ? { isReady: checkDatabaseReadiness }

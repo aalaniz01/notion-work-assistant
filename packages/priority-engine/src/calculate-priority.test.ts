@@ -1,7 +1,11 @@
 import type { Task, TaskStatus } from "@notion-work-assistant/domain";
 import { describe, expect, it } from "vitest";
 
-import { calculatePriority } from "./calculate-priority.js";
+import {
+  calculatePriority,
+  DEFAULT_PRIORITY_WEIGHTS,
+  type PriorityWeights,
+} from "./calculate-priority.js";
 
 function makeTask(
   status: TaskStatus = "NOT_STARTED",
@@ -98,5 +102,53 @@ describe("calculatePriority", () => {
 
     expect(calculatePriority(task)).toEqual(calculatePriority(task));
     expect(task).toEqual(snapshot);
+  });
+
+  it("uses the documented 50, 40, 10 default weights", () => {
+    expect(DEFAULT_PRIORITY_WEIGHTS).toEqual({
+      deadlineWeight: 50,
+      waitingTimeWeight: 40,
+      estimatedEffortWeight: 10,
+    });
+  });
+
+  it("applies custom weights normalized from a 0-to-100 sum", () => {
+    const weights: PriorityWeights = {
+      deadlineWeight: 60,
+      waitingTimeWeight: 30,
+      estimatedEffortWeight: 10,
+    };
+    expect(
+      calculatePriority(makeTask("NOT_STARTED", 100, 0, 0), weights),
+    ).toEqual({
+      taskId: "task-1",
+      eligible: true,
+      recommendationScore: 60,
+      priorityLevel: "MEDIUM",
+    });
+  });
+
+  it("rejects weights that do not sum exactly to 100", () => {
+    const weights: PriorityWeights = {
+      deadlineWeight: 50,
+      waitingTimeWeight: 40,
+      estimatedEffortWeight: 9,
+    };
+    expect(() => calculatePriority(makeTask(), weights)).toThrow(RangeError);
+  });
+
+  it.each([
+    -1,
+    101,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+  ] as const)("rejects an invalid weight value of %s", (value) => {
+    const weights: PriorityWeights = {
+      deadlineWeight: value,
+      waitingTimeWeight: 0,
+      estimatedEffortWeight: 0,
+    };
+    expect(() => calculatePriority(makeTask(), weights)).toThrow(RangeError);
   });
 });

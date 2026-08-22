@@ -14,6 +14,7 @@
     "@fastify/cookie": "11.1.2",
     "@notion-work-assistant/db": "workspace:*",
     "@notion-work-assistant/domain": "workspace:*",
+    "@notion-work-assistant/notion": "workspace:*",
     "@notion-work-assistant/priority-engine": "workspace:*",
     "fastify": "5.8.5",
     "jose": "6.2.9",

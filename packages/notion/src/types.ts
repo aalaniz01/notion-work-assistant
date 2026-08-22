@@ -13,6 +13,7 @@ export interface NotionTask {
   dueDate: string | null;
   status: TaskStatus;
   priority: string | null;
+  createdAt: string;
 }
 
 export interface NotionSnapshot {
